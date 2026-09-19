@@ -12,4 +12,6 @@ COPY app ./app
 RUN pip install --no-cache-dir .
 
 EXPOSE 8080
-CMD ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8080"]
+# Bind :: not 0.0.0.0 — Fly private networking is IPv6, and the SvelteKit
+# server is the only caller, reaching this over relative-api.internal.
+CMD ["uvicorn", "app.main:app", "--host", "::", "--port", "8080"]
