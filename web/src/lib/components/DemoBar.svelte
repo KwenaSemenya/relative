@@ -63,10 +63,12 @@
 		background: var(--s3);
 	}
 
+	/* The design gives the active button 8px 12px against the inactive 9px 13px,
+	   with border:0 on both, so switching state reflows the row by 2px. Padding
+	   is kept equal here so the bar never shifts under the cursor. */
 	.option.on {
 		background: var(--ink);
 		color: var(--bg);
-		padding: 8px 12px;
 	}
 
 	.option.on:hover {
