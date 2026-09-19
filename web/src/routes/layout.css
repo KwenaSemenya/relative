@@ -1,0 +1,115 @@
+@import 'tailwindcss';
+
+@import '@fontsource-variable/archivo';
+@import '@fontsource-variable/newsreader';
+
+/* Tokens transcribed from the Relative design file. Light is the default;
+   [data-mode="dark"] on <html> swaps the whole ramp. */
+:root {
+	--bg: #fbfbfb;
+	--s1: #f4f4f4;
+	--s2: #ededed;
+	--s3: #e5e5e5;
+	--line: #dcdcdc;
+	--rule: #1a1a1a;
+	--ink: #141414;
+	--ink-2: #4c4c4c;
+	--ink-3: #727272;
+	--accent: #1f5aff;
+	--accent-ink: #ffffff;
+	--accent-press: #1544c9;
+	--flag-bg: #f7efdd;
+	--flag-mark: #8a6510;
+	--flag-ink: #5c4204;
+	--ok-ink: #1f5730;
+	--ok-bg: #e9f1ea;
+
+	--sans: 'Archivo Variable', 'Archivo', system-ui, sans-serif;
+	--serif: 'Newsreader Variable', 'Newsreader', Georgia, serif;
+}
+
+[data-mode='dark'] {
+	--bg: #0a0a0a;
+	--s1: #141414;
+	--s2: #1b1b1b;
+	--s3: #232323;
+	--line: #303030;
+	--rule: #efefef;
+	--ink: #f2f2f2;
+	--ink-2: #b8b8b8;
+	--ink-3: #8e8e8e;
+	--accent: #82a6ff;
+	--accent-ink: #060c1c;
+	--accent-press: #b3c8ff;
+	--flag-bg: #241d07;
+	--flag-mark: #e0b455;
+	--flag-ink: #f0c96f;
+	--ok-ink: #7ed199;
+	--ok-bg: #11231a;
+}
+
+/* Two-column layout collapses to one at 900px. */
+:root {
+	--brief-basis: 320px;
+	--brief-max: 380px;
+	--kit-basis: 380px;
+}
+
+@media (max-width: 900px) {
+	:root {
+		--brief-basis: 100%;
+		--brief-max: 100%;
+		--kit-basis: 100%;
+	}
+}
+
+html,
+body {
+	background: #fbfbfb;
+	margin: 0;
+}
+
+[data-mode='dark'],
+[data-mode='dark'] body {
+	background: #0a0a0a;
+}
+
+body {
+	font-family: var(--sans);
+	font-weight: 400;
+}
+
+a {
+	color: var(--accent);
+}
+
+a:hover {
+	color: var(--accent-press);
+}
+
+@keyframes recheck {
+	0%,
+	100% {
+		opacity: 0.4;
+	}
+	50% {
+		opacity: 1;
+	}
+}
+
+/* The design defines no focus ring, but the build has to be keyboard
+   reachable throughout, so give every focusable a visible one. */
+:focus-visible {
+	outline: 2px solid var(--accent);
+	outline-offset: 2px;
+}
+
+@media (prefers-reduced-motion: reduce) {
+	*,
+	*::before,
+	*::after {
+		transition: none !important;
+		animation: none !important;
+		scroll-behavior: auto !important;
+	}
+}
