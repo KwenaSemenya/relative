@@ -1,0 +1,20 @@
+app = "relative-web"
+primary_region = "lhr"
+
+[build]
+
+[env]
+PORT = "8080"
+# Reached over Fly private networking, so the API stays off the public internet.
+RELATIVE_API_URL = "http://relative-api.internal:8080"
+
+[http_service]
+internal_port = 8080
+force_https = true
+auto_stop_machines = "stop"
+auto_start_machines = true
+min_machines_running = 0
+
+[[vm]]
+size = "shared-cpu-1x"
+memory = "512mb"

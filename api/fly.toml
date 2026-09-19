@@ -1,0 +1,21 @@
+app = "relative-api"
+primary_region = "lhr"
+
+[build]
+
+[env]
+RELATIVE_ENVIRONMENT = "production"
+
+# No [http_service] block on purpose: the API is never exposed to the public
+# internet. The SvelteKit server reaches it at relative-api.internal:8080 over
+# Fly private networking, which is also why there is no CORS layer.
+[[services]]
+internal_port = 8080
+protocol = "tcp"
+auto_stop_machines = "stop"
+auto_start_machines = true
+min_machines_running = 0
+
+[[vm]]
+size = "shared-cpu-1x"
+memory = "256mb"
