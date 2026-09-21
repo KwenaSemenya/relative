@@ -1,10 +1,17 @@
 import type { Narrative } from '$lib/types';
 
+export const NARRATIVE_LABEL = 'Kestrel Learn, FY26';
+
+/** Named human who signs off kits aimed at a sensitive market. */
+export const SENSITIVE_REVIEWER = 'Priya Raman';
+
 /**
  * The Kestrel Learn narrative. HQ owns this; the product never edits it.
  * Content is transcribed verbatim from the design file.
  */
 export const NARRATIVE: Narrative = {
+	label: NARRATIVE_LABEL,
+	sensitiveReviewer: SENSITIVE_REVIEWER,
 	pillars: [
 		{
 			id: 'pillar1',
@@ -35,8 +42,3 @@ export const NARRATIVE: Narrative = {
 		'Pays for itself'
 	]
 };
-
-export const NARRATIVE_LABEL = 'Kestrel Learn, FY26';
-
-/** Named human who signs off kits aimed at a sensitive market. */
-export const SENSITIVE_REVIEWER = 'Priya Raman';

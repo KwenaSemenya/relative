@@ -8,8 +8,10 @@ class Settings(BaseSettings):
 
     environment: str = "development"
 
+    # Neon. Set as a Fly secret in production; never committed.
+    database_url: str = "postgresql://localhost/relative"
+
     # Phase 3 adds the Claude API key here.
-    # Phase 2 adds database_url here.
 
 
 @lru_cache

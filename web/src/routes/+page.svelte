@@ -5,8 +5,14 @@
 	import KitPanel from '$lib/components/KitPanel.svelte';
 	import NarrativeSheet from '$lib/components/NarrativeSheet.svelte';
 	import { KitState } from '$lib/state/kit.svelte';
+	import type { PageData } from './$types';
 
-	const kit = new KitState();
+	let { data }: { data: PageData } = $props();
+
+	const kit = new KitState({
+		kit: data.kit ?? undefined,
+		narrative: data.narrative ?? undefined
+	});
 
 	$effect(() => {
 		kit.initMode();
@@ -58,7 +64,7 @@
 </div>
 
 {#if kit.narrativeOpen}
-	<NarrativeSheet onClose={() => (kit.narrativeOpen = false)} />
+	<NarrativeSheet narrative={kit.narrative} onClose={() => (kit.narrativeOpen = false)} />
 {/if}
 
 <style>

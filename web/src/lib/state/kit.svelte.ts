@@ -8,7 +8,15 @@ import {
 	exampleGroups
 } from '$lib/data/example-kit';
 import { buildEvidenceIndex, resolveEvidence } from '$lib/evidence';
-import type { AssetGroup, AssetType, EvidenceRequest, ReviewState } from '$lib/types';
+import type {
+	AssetGroup,
+	AssetType,
+	EvidenceRequest,
+	Kit,
+	Narrative,
+	ProofPoint,
+	ReviewState
+} from '$lib/types';
 
 export type View = 'kit' | 'refusal' | 'generating';
 
@@ -48,6 +56,24 @@ export const REFUSAL_REASON =
 export const REFUSAL_FIX =
 	'Drop the score claim from the brief, or add a proof point that measured reading outcomes. Then generate again.';
 
+/** How a live kit writes changes back. Supplied by the /k/<slug> page. */
+export interface Persist {
+	review(assetType: AssetType, reviewState: ReviewState): Promise<Kit>;
+	edit(claimId: string, body: string): Promise<Kit>;
+}
+
+export interface KitStateOptions {
+	/** The kit to show. Comes from the database; falls back to the fixture. */
+	kit?: Kit;
+	narrative?: Narrative;
+	/**
+	 * A real saved kit opened at /k/<slug>. Review decisions and edits are
+	 * persisted, and the demo state switcher is not shown.
+	 */
+	live?: boolean;
+	persist?: Persist;
+}
+
 export class KitState {
 	mode = $state<'light' | 'dark'>('light');
 	narrativeOpen = $state(false);
@@ -63,6 +89,52 @@ export class KitState {
 
 	groups = $state<AssetGroup[]>(exampleGroups());
 	requests = $state<EvidenceRequest[]>([...EXAMPLE_REQUESTS]);
+
+	/** Set while a change is in flight, and cleared when the server answers. */
+	saving = $state(false);
+	/** Plain-language failure, shown without losing what the user typed. */
+	actionError = $state<string | null>(null);
+
+	readonly live: boolean;
+	readonly slug: string;
+	#narrative: Narrative;
+	#proofPoints: ProofPoint[];
+	#baseline: Kit | null;
+	#persist: Persist | null;
+
+	constructor(options: KitStateOptions = {}) {
+		const { kit, narrative, live = false, persist } = options;
+
+		this.live = live;
+		this.#persist = persist ?? null;
+		this.slug = kit?.slug ?? EXAMPLE_SLUG;
+		this.#narrative = narrative ?? NARRATIVE;
+		this.#proofPoints = kit?.proofPoints ?? EXAMPLE_PROOF_POINTS;
+		this.#baseline = kit ?? null;
+
+		if (kit) {
+			this.brief = kit.brief;
+			this.audience = kit.audience;
+			this.sensitive = kit.sensitiveMarket;
+			this.groups = structuredClone(kit.groups);
+			this.requests = structuredClone(kit.evidenceRequests);
+			this.tab = this.groups[0]?.assetType ?? 'talking_point';
+			if (!live) {
+				this.proofInputs = [...kit.proofPoints.map((p) => p.text), '', ''].slice(0, 3);
+			}
+		}
+	}
+
+	/** The kit as the database has it, used to reset the demo switcher. */
+	#freshGroups(): AssetGroup[] {
+		return this.#baseline ? structuredClone(this.#baseline.groups) : exampleGroups();
+	}
+
+	#freshRequests(): EvidenceRequest[] {
+		return this.#baseline
+			? structuredClone(this.#baseline.evidenceRequests)
+			: [...EXAMPLE_REQUESTS];
+	}
 
 	editingId = $state<string | null>(null);
 	editText = $state('');
@@ -107,7 +179,7 @@ export class KitState {
 	}
 
 	get evidenceIndex() {
-		return buildEvidenceIndex(EXAMPLE_PROOF_POINTS, NARRATIVE.pillars, this.groups);
+		return buildEvidenceIndex(this.#proofPoints, this.#narrative.pillars, this.groups);
 	}
 
 	get filledProofCount() {
@@ -226,10 +298,10 @@ export class KitState {
 				title: 'All three groups approved. The kit is locked and ready for HQ.',
 				body: 'Nothing else is needed from you. HQ sees the approved lines, the proof point behind each one, and your edits.',
 				hasLink: true,
-				link: `relative.kestrel.co/kit/${EXAMPLE_SLUG}`
+				link: this.shareLink
 			};
 		}
-		if (this.demo === 'landing' && this.decidedCount === 0 && !this.justCheckedId) {
+		if (!this.live && this.demo === 'landing' && this.decidedCount === 0 && !this.justCheckedId) {
 			return {
 				kicker: 'Worked example',
 				title: "This is last week's kit, kept here so you can see what comes back.",
@@ -255,6 +327,17 @@ export class KitState {
 
 	get copyLabel() {
 		return this.copied ? 'Link copied' : 'Copy link';
+	}
+
+	/** The approved narrative, as seeded by HQ. Read-only in the product. */
+	get narrative() {
+		return this.#narrative;
+	}
+
+	/** The real, openable link to this kit. The link is the access control. */
+	get shareLink() {
+		const origin = typeof location === 'undefined' ? '' : location.origin;
+		return `${origin}/k/${this.slug}`.replace(/^https?:\/\//, '');
 	}
 
 	// ── actions ──────────────────────────────────────────────────────────────
@@ -298,12 +381,12 @@ export class KitState {
 		this.openEvidenceId = null;
 		this.copied = false;
 		this.step = 0;
-		this.groups = exampleGroups();
-		this.requests = [...EXAMPLE_REQUESTS];
+		this.groups = this.#freshGroups();
+		this.requests = this.#freshRequests();
 		this.view = 'kit';
 		this.sensitive = false;
 		this.tab = 'talking_point';
-		this.brief = EXAMPLE_BRIEF;
+		this.brief = this.#baseline?.brief ?? EXAMPLE_BRIEF;
 
 		if (name === 'refusal') {
 			this.view = 'refusal';
@@ -373,8 +456,8 @@ export class KitState {
 		this.#clearTimers();
 		this.view = 'generating';
 		this.demo = 'generating';
-		this.groups = exampleGroups();
-		this.requests = [...EXAMPLE_REQUESTS];
+		this.groups = this.#freshGroups();
+		this.requests = this.#freshRequests();
 		this.editingId = null;
 		this.justCheckedId = null;
 		this.tab = 'talking_point';
@@ -411,9 +494,29 @@ export class KitState {
 		const i = group.claims.findIndex((c) => c.id === id);
 		if (i === -1) return;
 
-		group.claims[i] = { ...group.claims[i], body: text };
+		const previous = group.claims[i];
+		group.claims[i] = { ...previous, body: text };
 		this.editingId = null;
 		this.checkingId = id;
+		this.actionError = null;
+
+		if (this.live && this.#persist) {
+			// Phase 6 re-runs the critique pass here and updates the flag in place.
+			this.#persist
+				.edit(id, text)
+				.then((kit) => {
+					this.applyServerKit(kit);
+					this.justCheckedId = id;
+				})
+				.catch(() => {
+					group.claims[i] = previous;
+					this.editText = text;
+					this.editingId = id;
+					this.actionError = 'That edit did not save. Your wording is still here.';
+				})
+				.finally(() => (this.checkingId = null));
+			return;
+		}
 
 		// Phase 6 replaces this with a real single-line critique call.
 		this.#later(() => {
@@ -437,8 +540,35 @@ export class KitState {
 		const active = this.activeGroup;
 		const i = this.groups.findIndex((g) => g.assetType === active.assetType);
 		if (i === -1) return;
+
+		const previous = this.groups[i].reviewState;
+		// Answer the click immediately, then reconcile with the server.
 		this.groups[i].reviewState = state;
-		if (state === 'approved') this.demo = 'partial';
+		this.actionError = null;
+
+		if (!this.live || !this.#persist) {
+			if (state === 'approved') this.demo = 'partial';
+			return;
+		}
+
+		this.saving = true;
+		this.#persist
+			.review(active.assetType, state)
+			.then((kit) => this.applyServerKit(kit))
+			.catch(() => {
+				// Put the real state back rather than show a decision that did not save.
+				this.groups[i].reviewState = previous;
+				this.actionError = 'That decision did not save. Check your connection and try again.';
+			})
+			.finally(() => (this.saving = false));
+	}
+
+	/** Replaces local state with what the database actually holds. */
+	applyServerKit(kit: Kit) {
+		this.#baseline = kit;
+		this.#proofPoints = kit.proofPoints;
+		this.groups = structuredClone(kit.groups);
+		this.requests = structuredClone(kit.evidenceRequests);
 	}
 
 	copyLink(link: string) {

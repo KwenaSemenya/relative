@@ -1,11 +1,15 @@
 <script lang="ts">
 	import { NARRATIVE, NARRATIVE_LABEL } from '$lib/data/narrative';
+	import type { Narrative } from '$lib/types';
 
 	interface Props {
+		narrative?: Narrative;
 		onClose: () => void;
 	}
 
-	let { onClose }: Props = $props();
+	let { narrative = NARRATIVE, onClose }: Props = $props();
+
+	const label = $derived(narrative.label ?? NARRATIVE_LABEL);
 
 	let panel = $state<HTMLElement | null>(null);
 
@@ -38,14 +42,14 @@
 		<div class="sheet-head">
 			<div class="titles">
 				<h2 id="narrative-heading">Approved narrative</h2>
-				<p class="sub">{NARRATIVE_LABEL}. Read-only — HQ owns this.</p>
+				<p class="sub">{label}. Read-only — HQ owns this.</p>
 			</div>
 			<button type="button" class="close" onclick={onClose}>Close</button>
 		</div>
 
 		<div class="pillars">
 			<div class="kicker">Message pillars</div>
-			{#each NARRATIVE.pillars as pillar (pillar.id)}
+			{#each narrative.pillars as pillar (pillar.id)}
 				<div class="pillar">
 					<div class="pillar-title">{pillar.title}</div>
 					<p class="pillar-body">{pillar.body}</p>
@@ -55,7 +59,7 @@
 
 		<div class="never">
 			<div class="kicker">Never say</div>
-			{#each NARRATIVE.neverSay as phrase (phrase)}
+			{#each narrative.neverSay as phrase (phrase)}
 				<div class="never-item">{phrase}</div>
 			{/each}
 		</div>

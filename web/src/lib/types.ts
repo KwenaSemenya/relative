@@ -10,6 +10,9 @@ export interface Pillar {
 }
 
 export interface Narrative {
+	label: string;
+	/** Who signs off a kit aimed at a sensitive market. */
+	sensitiveReviewer: string;
 	pillars: Pillar[];
 	neverSay: string[];
 }
