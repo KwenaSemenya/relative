@@ -4,14 +4,43 @@
 	import BriefPanel from '$lib/components/BriefPanel.svelte';
 	import KitPanel from '$lib/components/KitPanel.svelte';
 	import NarrativeSheet from '$lib/components/NarrativeSheet.svelte';
-	import { KitState } from '$lib/state/kit.svelte';
+	import { deserialize } from '$app/forms';
+	import { KitState, type DraftInput, type DraftResult } from '$lib/state/kit.svelte';
+	import type { Kit } from '$lib/types';
 	import type { PageData } from './$types';
 
 	let { data }: { data: PageData } = $props();
 
+	async function draft(input: DraftInput): Promise<DraftResult> {
+		const body = new FormData();
+		body.set('brief', input.brief);
+		body.set('audience', input.audience);
+		body.set('sensitiveMarket', String(input.sensitiveMarket));
+		for (const proof of input.proofPoints) body.append('proofPoint', proof);
+
+		const response = await fetch('?/generate', { method: 'POST', body });
+
+		// An action's payload is devalue-encoded, not JSON: it is a flat array
+		// where objects hold indices into it. JSON.parse would hand back those
+		// indices as if they were the values. deserialize rebuilds the graph.
+		const result = deserialize<{ kit?: Kit; refusal?: DraftResult['refusal'] }, { message: string }>(
+			await response.text()
+		);
+
+		if (result.type === 'failure') {
+			throw new Error(result.data?.message ?? 'The brief could not be checked just now.');
+		}
+		if (result.type !== 'success') {
+			throw new Error('The brief could not be checked just now.');
+		}
+
+		return { kit: result.data?.kit ?? null, refusal: result.data?.refusal ?? null };
+	}
+
 	const kit = new KitState({
 		kit: data.kit ?? undefined,
-		narrative: data.narrative ?? undefined
+		narrative: data.narrative ?? undefined,
+		draft
 	});
 
 	$effect(() => {
@@ -49,6 +78,7 @@
 			canGenerate={kit.canGenerate}
 			generateLabel={kit.generateLabel}
 			generateBlockedWhy={kit.generateBlockedWhy}
+			error={kit.actionError}
 			onBrief={(v) => (kit.brief = v)}
 			onAudience={(v) => (kit.audience = v)}
 			onProof={(i, v) => (kit.proofInputs[i] = v)}

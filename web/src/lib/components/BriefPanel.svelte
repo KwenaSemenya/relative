@@ -9,6 +9,8 @@
 		canGenerate: boolean;
 		generateLabel: string;
 		generateBlockedWhy: string;
+		/** Set when the last generate could not be completed at all. */
+		error: string | null;
 		onBrief: (value: string) => void;
 		onAudience: (value: string) => void;
 		onProof: (index: number, value: string) => void;
@@ -24,6 +26,7 @@
 		canGenerate,
 		generateLabel,
 		generateBlockedWhy,
+		error,
 		onBrief,
 		onAudience,
 		onProof,
@@ -108,6 +111,12 @@
 			{#if generateBlockedWhy}
 				<p class="why" id="generate-why">{generateBlockedWhy}</p>
 			{/if}
+		{/if}
+
+		<!-- Sits under the button that caused it, so the fix is where the eye
+		     already is. The brief and proof points above are untouched. -->
+		{#if error}
+			<p class="error" role="alert">{error}</p>
 		{/if}
 	</div>
 </section>
@@ -251,6 +260,18 @@
 	.why {
 		font-size: 14px;
 		color: var(--ink-3);
+		margin: 0;
+	}
+
+	/* Same flag treatment the kit uses for a line that needs attention, so a
+	   failed generate reads as the same kind of event. */
+	.error {
+		background: var(--flag-bg);
+		border-left: 2px solid var(--flag-mark);
+		color: var(--ink);
+		font-size: 15px;
+		line-height: 1.45;
+		padding: 12px 16px;
 		margin: 0;
 	}
 </style>

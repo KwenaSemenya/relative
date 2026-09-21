@@ -12,9 +12,11 @@ from pydantic import Field
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app import repo
+from app.claude import ClaudeUnavailable
 from app.config import get_settings
 from app.db import session
 from app.models import Kit, Narrative, Wire
+from app.validation import validate_inputs
 
 app = FastAPI(
     title="Relative API",
@@ -32,6 +34,24 @@ class CreateKit(Wire):
     audience: Annotated[str, Field(min_length=1, max_length=64)]
     proof_points: Annotated[list[str], Field(max_length=8)] = []
     sensitive_market: bool = False
+
+
+class Refusal(Wire):
+    """Why nothing was written, and what would unblock it."""
+
+    reason: str
+    fix: str
+
+
+class CreateKitResult(Wire):
+    """Either a kit or a refusal, never both.
+
+    A refusal is a normal answer rather than an error: the brief was read, and
+    the honest response was to write nothing. The caller keeps every input.
+    """
+
+    kit: Kit | None = None
+    refusal: Refusal | None = None
 
 
 class GroupReview(Wire):
@@ -56,17 +76,44 @@ async def get_narrative(db: Db) -> Narrative:
 
 
 @app.post(
-    "/kits", response_model=Kit, response_model_by_alias=True, status_code=201
+    "/kits",
+    response_model=CreateKitResult,
+    response_model_by_alias=True,
 )
-async def create_kit(body: CreateKit, db: Db) -> Kit:
+async def create_kit(body: CreateKit, db: Db) -> CreateKitResult:
     proof_texts = [p.strip() for p in body.proof_points if p.strip()]
-    return await repo.create_kit(
+    brief = body.brief.strip()
+
+    narrative = await repo.get_narrative(db)
+    if narrative is None:
+        raise HTTPException(status_code=503, detail="The narrative is not seeded yet.")
+
+    # Pre-flight. Nothing is written, and no row is created, until the brief
+    # has been read on its own.
+    try:
+        ok, reason, fix, _usage = await validate_inputs(
+            brief=brief,
+            audience=body.audience,
+            proof_texts=proof_texts,
+            narrative=narrative,
+        )
+    except ClaudeUnavailable:
+        raise HTTPException(
+            status_code=503,
+            detail="The brief could not be checked just now. Nothing was lost.",
+        ) from None
+
+    if not ok:
+        return CreateKitResult(refusal=Refusal(reason=reason, fix=fix))
+
+    kit = await repo.create_kit(
         db,
-        brief=body.brief.strip(),
+        brief=brief,
         audience=body.audience,
         proof_texts=proof_texts,
         sensitive_market=body.sensitive_market,
     )
+    return CreateKitResult(kit=kit)
 
 
 @app.get("/kits/{slug}", response_model=Kit, response_model_by_alias=True)

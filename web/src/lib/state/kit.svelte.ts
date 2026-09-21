@@ -62,6 +62,22 @@ export interface Persist {
 	edit(claimId: string, body: string): Promise<Kit>;
 }
 
+export interface DraftInput {
+	brief: string;
+	audience: string;
+	proofPoints: string[];
+	sensitiveMarket: boolean;
+}
+
+/** A refusal and a kit are mutually exclusive; one of the two is always set. */
+export interface DraftResult {
+	kit: Kit | null;
+	refusal: { reason: string; fix: string } | null;
+}
+
+/** Runs pre-flight validation and, if it passes, creates the kit. */
+export type Draft = (input: DraftInput) => Promise<DraftResult>;
+
 export interface KitStateOptions {
 	/** The kit to show. Comes from the database; falls back to the fixture. */
 	kit?: Kit;
@@ -72,6 +88,11 @@ export interface KitStateOptions {
 	 */
 	live?: boolean;
 	persist?: Persist;
+	/**
+	 * Supplied by the landing page. Without it the demo switcher runs its
+	 * scripted timings instead of calling the server.
+	 */
+	draft?: Draft;
 }
 
 export class KitState {
@@ -95,18 +116,32 @@ export class KitState {
 	/** Plain-language failure, shown without losing what the user typed. */
 	actionError = $state<string | null>(null);
 
+	/**
+	 * Why the last brief was refused. Seeded with the worked example so the
+	 * demo switcher still shows it; a real generate replaces both.
+	 */
+	refusalReason = $state(REFUSAL_REASON);
+	refusalFix = $state(REFUSAL_FIX);
+	/** True once this session generated its own kit, so the page stops
+	 * describing what is on screen as last week's worked example. */
+	generated = $state(false);
+
 	readonly live: boolean;
-	readonly slug: string;
+	/** Changes when a generate replaces the kit, which is what the share link
+	 * is built from. */
+	slug = $state('');
 	#narrative: Narrative;
 	#proofPoints: ProofPoint[];
 	#baseline: Kit | null;
 	#persist: Persist | null;
+	#draft: Draft | null;
 
 	constructor(options: KitStateOptions = {}) {
-		const { kit, narrative, live = false, persist } = options;
+		const { kit, narrative, live = false, persist, draft } = options;
 
 		this.live = live;
 		this.#persist = persist ?? null;
+		this.#draft = draft ?? null;
 		this.slug = kit?.slug ?? EXAMPLE_SLUG;
 		this.#narrative = narrative ?? NARRATIVE;
 		this.#proofPoints = kit?.proofPoints ?? EXAMPLE_PROOF_POINTS;
@@ -301,7 +336,22 @@ export class KitState {
 				link: this.shareLink
 			};
 		}
-		if (!this.live && this.demo === 'landing' && this.decidedCount === 0 && !this.justCheckedId) {
+		if (this.generated && this.view === 'kit' && this.decidedCount === 0) {
+			return {
+				kicker: 'Your kit',
+				title: 'Written from your brief. This link opens it anywhere.',
+				body: 'Every line names the proof point behind it. Approve, edit or reject each group — the link keeps whatever you decide.',
+				hasLink: true,
+				link: this.shareLink
+			};
+		}
+		if (
+			!this.live &&
+			!this.generated &&
+			this.demo === 'landing' &&
+			this.decidedCount === 0 &&
+			!this.justCheckedId
+		) {
 			return {
 				kicker: 'Worked example',
 				title: "This is last week's kit, kept here so you can see what comes back.",
@@ -380,6 +430,7 @@ export class KitState {
 		this.justCheckedId = null;
 		this.openEvidenceId = null;
 		this.copied = false;
+		this.actionError = null;
 		this.step = 0;
 		this.groups = this.#freshGroups();
 		this.requests = this.#freshRequests();
@@ -391,6 +442,11 @@ export class KitState {
 		if (name === 'refusal') {
 			this.view = 'refusal';
 			this.brief = REFUSAL_BRIEF;
+			// The scripted brief needs the scripted reason beside it. A live
+			// refusal left over from a real generate would describe a brief the
+			// panel is no longer showing.
+			this.refusalReason = REFUSAL_REASON;
+			this.refusalFix = REFUSAL_FIX;
 		}
 
 		if (name === 'generating') {
@@ -443,29 +499,69 @@ export class KitState {
 		this.#later(() => (this.step = 4), 3100);
 	}
 
-	generate() {
-		if (this.budgetSpent) return;
+	async generate() {
+		if (this.budgetSpent || this.generating) return;
 
-		// Phase 3 replaces this with a real pre-flight validation call.
-		if (/guarantee|score|test result/i.test(this.brief)) {
-			this.view = 'refusal';
-			this.demo = 'refusal';
+		// The progress bar starts before the call so the click is acknowledged
+		// immediately, rather than after Claude has finished reading the brief.
+		this.#clearTimers();
+		this.actionError = null;
+		this.view = 'generating';
+		this.demo = 'generating';
+		this.editingId = null;
+		this.justCheckedId = null;
+		this.runProgress();
+
+		if (!this.#draft) {
+			// No server to call: the demo switcher runs the scripted timings.
+			this.groups = this.#freshGroups();
+			this.requests = this.#freshRequests();
+			this.tab = 'talking_point';
+			this.#later(() => {
+				this.view = 'kit';
+				this.demo = 'landing';
+			}, 3900);
 			return;
 		}
 
-		this.#clearTimers();
-		this.view = 'generating';
-		this.demo = 'generating';
-		this.groups = this.#freshGroups();
-		this.requests = this.#freshRequests();
-		this.editingId = null;
-		this.justCheckedId = null;
-		this.tab = 'talking_point';
-		this.runProgress();
-		this.#later(() => {
+		try {
+			const result = await this.#draft({
+				brief: this.brief,
+				audience: this.audience,
+				proofPoints: this.proofInputs.map((p) => p.trim()).filter(Boolean),
+				sensitiveMarket: this.sensitive
+			});
+
+			this.#clearTimers();
+
+			if (result.refusal) {
+				// Nothing was written and nothing is cleared. Every input stays
+				// exactly where the user left it.
+				this.refusalReason = result.refusal.reason;
+				this.refusalFix = result.refusal.fix;
+				this.view = 'refusal';
+				this.demo = 'refusal';
+				return;
+			}
+
+			if (result.kit) {
+				this.applyServerKit(result.kit);
+				this.generated = true;
+				this.tab = 'talking_point';
+				this.view = 'kit';
+				this.demo = 'landing';
+			}
+		} catch (e) {
+			// The brief could not be checked. That is not a refusal, so the page
+			// says so plainly and keeps the user where they were.
+			this.#clearTimers();
 			this.view = 'kit';
 			this.demo = 'landing';
-		}, 3900);
+			this.actionError =
+				e instanceof Error && e.message
+					? e.message
+					: 'The brief could not be checked just now. Nothing you typed was lost.';
+		}
 	}
 
 	setTab(assetType: AssetType) {
@@ -569,6 +665,9 @@ export class KitState {
 		this.#proofPoints = kit.proofPoints;
 		this.groups = structuredClone(kit.groups);
 		this.requests = structuredClone(kit.evidenceRequests);
+		// The slug travels with the kit: after a generate this is a different
+		// kit, and the share link has to point at it rather than the example.
+		this.slug = kit.slug;
 	}
 
 	copyLink(link: string) {

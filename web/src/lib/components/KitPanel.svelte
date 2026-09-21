@@ -1,7 +1,7 @@
 <script lang="ts">
 	import ClaimLine from './ClaimLine.svelte';
 	import { SENSITIVE_REVIEWER } from '$lib/data/narrative';
-	import { REFUSAL_FIX, REFUSAL_REASON, type KitState } from '$lib/state/kit.svelte';
+	import { type KitState } from '$lib/state/kit.svelte';
 
 	interface Props {
 		kit: KitState;
@@ -38,11 +38,11 @@
 			<div class="refusal-card">
 				<div class="kicker flag-kicker">Not generated</div>
 				<div class="refusal-title">A proof point contradicts the brief, so nothing was written.</div>
-				<p class="refusal-reason">{REFUSAL_REASON}</p>
+				<p class="refusal-reason">{kit.refusalReason}</p>
 			</div>
 			<div class="fix">
 				<div class="kicker">How to fix it</div>
-				<p class="fix-body">{REFUSAL_FIX}</p>
+				<p class="fix-body">{kit.refusalFix}</p>
 				<p class="fix-note">Everything you typed is still in the brief panel.</p>
 			</div>
 		</div>

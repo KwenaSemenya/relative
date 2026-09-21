@@ -11,7 +11,11 @@ class Settings(BaseSettings):
     # Neon. Set as a Fly secret in production; never committed.
     database_url: str = "postgresql://localhost/relative"
 
-    # Phase 3 adds the Claude API key here.
+    # Claude. Set as a Fly secret in production; never committed.
+    anthropic_api_key: str = ""
+    # One model for every call. Pre-flight validation and the critique pass
+    # differ by prompt and by what they are shown, not by model.
+    claude_model: str = "claude-sonnet-4-6"
 
 
 @lru_cache
