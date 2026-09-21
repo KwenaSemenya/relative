@@ -12,6 +12,8 @@ COPY app ./app
 RUN pip install --no-cache-dir .
 
 EXPOSE 8080
-# Bind :: not 0.0.0.0 — Fly private networking is IPv6, and the SvelteKit
-# server is the only caller, reaching this over relative-api.internal.
-CMD ["uvicorn", "app.main:app", "--host", "::", "--port", "8080"]
+# Bind 0.0.0.0, not ::. Traffic arrives through the Fly proxy on .flycast and
+# the proxy connects over IPv4. Uvicorn's :: bind is IPv6-only — it refuses
+# IPv4 rather than accepting mapped addresses — so :: makes the proxy report
+# "instance refused connection" and the API becomes unreachable.
+CMD ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8080"]

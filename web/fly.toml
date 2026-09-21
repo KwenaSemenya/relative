@@ -6,7 +6,11 @@ primary_region = "lhr"
 [env]
 PORT = "8080"
 # Reached over Fly private networking, so the API stays off the public internet.
-RELATIVE_API_URL = "http://relative-api.internal:8080"
+# .flycast, not .internal: .internal resolves straight to the machine and skips
+# the Fly proxy, so a request could never wake the API once it scaled to zero.
+# .flycast routes through the proxy, which starts it on demand and is still
+# private — the address is a private ingress IP with no public route.
+RELATIVE_API_URL = "http://relative-api.flycast:8080"
 
 [http_service]
 internal_port = 8080

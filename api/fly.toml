@@ -7,14 +7,23 @@ primary_region = "lhr"
 RELATIVE_ENVIRONMENT = "production"
 
 # No [http_service] block on purpose: the API is never exposed to the public
-# internet. The SvelteKit server reaches it at relative-api.internal:8080 over
-# Fly private networking, which is also why there is no CORS layer.
+# internet. The SvelteKit server reaches it at relative-api.flycast:8080 over
+# Fly private networking, which is also why there is no CORS layer. The app has
+# no public IPs; its only address is a private ingress one, which is what lets
+# the Fly proxy wake this machine from zero without exposing it.
 [[services]]
 internal_port = 8080
 protocol = "tcp"
 auto_stop_machines = "stop"
 auto_start_machines = true
 min_machines_running = 0
+
+# Without a ports entry the proxy binds nothing and resets the connection, so
+# the service is only reachable at .internal, which cannot wake a stopped
+# machine. This is what makes scale-to-zero work.
+[[services.ports]]
+port = 8080
+handlers = ["http"]
 
 [[vm]]
 size = "shared-cpu-1x"
