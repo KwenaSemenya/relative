@@ -15,6 +15,7 @@ from app import repo
 from app.claude import ClaudeUnavailable
 from app.config import get_settings
 from app.db import session
+from app.drafting import draft_claims
 from app.models import Kit, Narrative, Wire
 from app.validation import validate_inputs
 
@@ -106,12 +107,39 @@ async def create_kit(body: CreateKit, db: Db) -> CreateKitResult:
     if not ok:
         return CreateKitResult(refusal=Refusal(reason=reason, fix=fix))
 
+    # Generation happens before the row exists, so a failed call leaves no
+    # half-written kit behind for someone to find later.
+    try:
+        draft, _usage = await draft_claims(
+            brief=brief,
+            audience=body.audience,
+            proof_points=repo.proof_point_ids(proof_texts),
+            narrative=narrative,
+        )
+    except ClaudeUnavailable:
+        raise HTTPException(
+            status_code=503,
+            detail="The kit could not be written just now. Nothing was lost.",
+        ) from None
+
+    # Every line was dropped for citing something this kit does not have. A kit
+    # of nothing is not a kit, and saying so beats an empty page.
+    if not draft.claims:
+        raise HTTPException(
+            status_code=502,
+            detail=(
+                "Nothing came back that could be traced to your proof points. "
+                "Nothing you typed was lost — try generating again."
+            ),
+        )
+
     kit = await repo.create_kit(
         db,
         brief=brief,
         audience=body.audience,
         proof_texts=proof_texts,
         sensitive_market=body.sensitive_market,
+        draft=draft,
     )
     return CreateKitResult(kit=kit)
 

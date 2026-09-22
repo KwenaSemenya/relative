@@ -72,11 +72,13 @@
 
 	{#if line.showMarker}
 		<div class="marker-row">
+			<!-- A source is a proof point or a pillar and the numbering runs across
+			 both, so the label names the source rather than assuming its kind. -->
 			<button
 				type="button"
 				class="marker"
 				aria-expanded={line.evidenceOpen}
-				aria-label={`Evidence, proof point ${line.sourceNo}`}
+				aria-label={`Evidence, source ${line.sourceNo}: ${line.evidence}`}
 				onclick={() => onEvidenceToggle(line.id)}
 				onmouseenter={() => onEvidenceOpen(line.id)}
 				onmouseleave={() => onEvidenceOpen(null)}

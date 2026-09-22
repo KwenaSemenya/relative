@@ -5,7 +5,7 @@ from datetime import UTC, datetime
 from sqlalchemy import select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app import drafting, seed, tables
+from app import drafting, tables
 from app.models import AssetGroup, Claim, EvidenceRequest, Kit, Narrative, Pillar
 from app.models import ProofPoint as ProofPointModel
 from app.slugs import make_slug
@@ -95,12 +95,22 @@ def to_kit(row: tables.Kit) -> Kit:
     )
 
 
+def proof_point_ids(proof_texts: list[str]) -> list[tuple[str, str]]:
+    """The ids a kit's proof points will have, before the kit exists.
+
+    Drafting has to cite these ids, and drafting runs before anything is
+    written, so the numbering is decided here rather than inferred later.
+    """
+    return [(f"pp{i + 1}", text) for i, text in enumerate(proof_texts)]
+
+
 async def create_kit(
     db: AsyncSession,
     brief: str,
     audience: str,
     proof_texts: list[str],
     sensitive_market: bool,
+    draft: drafting.Draft,
 ) -> Kit:
     slug = make_slug(brief)
     kit = tables.Kit(
@@ -111,10 +121,7 @@ async def create_kit(
         sensitive_market=sensitive_market,
     )
     db.add(kit)
-    supplied = set()
-    for i, text in enumerate(proof_texts):
-        pp_id = f"pp{i + 1}"
-        supplied.add(pp_id)
+    for i, (pp_id, text) in enumerate(proof_point_ids(proof_texts)):
         db.add(tables.ProofPoint(kit_id=kit.id, id=pp_id, ordinal=i, text=text))
     # Claims cite proof points through a composite foreign key that SQLAlchemy
     # does not order for us, so the proof points have to land first. Child rows
@@ -122,37 +129,8 @@ async def create_kit(
     # collection on a flushed kit would trigger a lazy load.
     await db.flush()
 
-    draft = drafting.draft_claims(brief, audience, proof_texts)
-
-    # The draft cites proof points by the id the worked example uses. Map those
-    # onto the ids this kit actually has, positionally.
-    template_ids = [p.id for p in seed.example_kit().proof_points]
-    remap = {
-        old: f"pp{i + 1}"
-        for i, old in enumerate(template_ids)
-        if f"pp{i + 1}" in supplied
-    }
-
-    requests = list(draft.evidence_requests)
     ordinals: dict[str, int] = {}
-
     for draft_claim in draft.claims:
-        cited = draft_claim.evidence_proof_point_id
-        if draft_claim.evidence_kind == "proof_point":
-            cited = remap.get(cited or "")
-            if cited is None:
-                # The proof point this line leaned on was never supplied, so the
-                # line does not get written. The gap is recorded instead.
-                requests.append(
-                    (
-                        f"er_{draft_claim.id}",
-                        "A proof point for this line",
-                        f"A {draft_claim.asset_type.replace('_', ' ')} line needed"
-                        " support that no proof point covers, so it was not written.",
-                    )
-                )
-                continue
-
         ordinal = ordinals.get(draft_claim.asset_type, 0)
         ordinals[draft_claim.asset_type] = ordinal + 1
         db.add(
@@ -164,14 +142,14 @@ async def create_kit(
                 body=draft_claim.body,
                 pillar_id=draft_claim.pillar_id,
                 evidence_kind=draft_claim.evidence_kind,
-                evidence_proof_point_id=cited,
+                evidence_proof_point_id=draft_claim.evidence_proof_point_id,
                 flag_state=draft_claim.flag_state,
                 flag_reason=draft_claim.flag_reason,
                 review_state="pending",
             )
         )
 
-    for i, (rid, need, why) in enumerate(requests):
+    for i, (rid, need, why) in enumerate(draft.evidence_requests):
         db.add(
             tables.EvidenceRequest(
                 kit_id=kit.id, id=rid, ordinal=i, need=need, why=why
