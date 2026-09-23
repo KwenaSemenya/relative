@@ -295,6 +295,7 @@ export class KitState {
 			const editing = this.editingId === claim.id;
 			const checking = this.checkingId === claim.id;
 			const resolved = resolveEvidence(claim, index);
+			const flagged = claim.flagState === 'flagged' && !editing && !checking;
 			return {
 				id: claim.id,
 				text: claim.body,
@@ -303,9 +304,12 @@ export class KitState {
 				sourceNo: resolved?.number ?? '',
 				editing,
 				checking,
-				flagged: claim.flagState === 'flagged' && !editing && !checking,
+				flagged,
 				showMarker: !!resolved && !checking && !editing,
 				justChecked: this.justCheckedId === claim.id,
+				// The same check that clears a line can also catch one, so this
+				// reports the verdict rather than assuming the edit fixed it.
+				recheckLabel: flagged ? 'Re-checked — still flagged' : 'Re-checked, on message',
 				canEdit: this.activeGroup.reviewState === 'pending' && !editing && !checking,
 				editRevealed: this.hoverLineId === claim.id,
 				evidenceOpen: this.openEvidenceId === claim.id
@@ -402,6 +406,16 @@ export class KitState {
 	}
 
 	// ── actions ──────────────────────────────────────────────────────────────
+
+	/** What went wrong, in the server's words where it had any.
+	 *
+	 * The API explains refusals it makes on purpose — a sensitive market going
+	 * to a named reviewer, a line that could not be re-checked — and those read
+	 * better than anything this layer could guess from a failed promise.
+	 */
+	#why(e: unknown, fallback: string) {
+		return e instanceof Error && e.message ? e.message : fallback;
+	}
 
 	#later(fn: () => void, ms: number) {
 		this.#timers.push(setTimeout(fn, ms));
@@ -616,24 +630,29 @@ export class KitState {
 		this.actionError = null;
 
 		if (this.live && this.#persist) {
-			// Phase 6 re-runs the critique pass here and updates the flag in place.
+			// The server re-checks this one line with the same cold critique the
+			// whole kit got, so the flag that comes back belongs to the new
+			// wording rather than the sentence it replaced.
 			this.#persist
 				.edit(id, text)
 				.then((kit) => {
 					this.applyServerKit(kit);
 					this.justCheckedId = id;
 				})
-				.catch(() => {
+				.catch((e) => {
+					// Put the line back and reopen the box with what was typed. An
+					// edit that failed to save must not look like one that did.
 					group.claims[i] = previous;
 					this.editText = text;
 					this.editingId = id;
-					this.actionError = 'That edit did not save. Your wording is still here.';
+					this.actionError = this.#why(e, 'That edit did not save. Your wording is still here.');
 				})
 				.finally(() => (this.checkingId = null));
 			return;
 		}
 
-		// Phase 6 replaces this with a real single-line critique call.
+		// The demo switcher has no server to call, so it plays the design's
+		// scripted outcome for this one line at the design's pace.
 		this.#later(() => {
 			const j = group.claims.findIndex((c) => c.id === id);
 			if (j !== -1) {
@@ -652,6 +671,10 @@ export class KitState {
 	}
 
 	setGroupReview(state: ReviewState) {
+		// A decision and its undo are one click apart, so a second click landing
+		// mid-flight would have two writes racing to say what the group is.
+		if (this.saving) return;
+
 		const active = this.activeGroup;
 		const i = this.groups.findIndex((g) => g.assetType === active.assetType);
 		if (i === -1) return;
@@ -670,10 +693,13 @@ export class KitState {
 		this.#persist
 			.review(active.assetType, state)
 			.then((kit) => this.applyServerKit(kit))
-			.catch(() => {
+			.catch((e) => {
 				// Put the real state back rather than show a decision that did not save.
 				this.groups[i].reviewState = previous;
-				this.actionError = 'That decision did not save. Check your connection and try again.';
+				this.actionError = this.#why(
+					e,
+					'That decision did not save. Check your connection and try again.'
+				);
 			})
 			.finally(() => (this.saving = false));
 	}

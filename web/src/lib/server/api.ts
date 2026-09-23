@@ -70,5 +70,8 @@ export const reviewGroup = (slug: string, assetType: string, reviewState: string
 export const editClaim = (slug: string, claimId: string, body: string) =>
 	call<Kit>(`/kits/${encodeURIComponent(slug)}/claims/${encodeURIComponent(claimId)}`, {
 		method: 'POST',
-		body: JSON.stringify({ body })
+		body: JSON.stringify({ body }),
+		// An edit is re-checked by a Claude call before it is stored, so this
+		// waits like a generate rather than like a database read.
+		signal: AbortSignal.timeout(45_000)
 	});

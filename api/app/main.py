@@ -193,7 +193,17 @@ async def review_group(
     if body.review_state not in {"pending", "approved", "rejected"}:
         raise HTTPException(status_code=422, detail="Unknown review state.")
 
-    kit = await repo.set_group_review(db, slug, asset_type, body.review_state)
+    try:
+        kit = await repo.set_group_review(db, slug, asset_type, body.review_state)
+    except repo.SensitiveMarket:
+        raise HTTPException(
+            status_code=409,
+            detail=(
+                "This kit is for a sensitive market, so it goes to a named "
+                "reviewer before anyone approves it here."
+            ),
+        ) from None
+
     if kit is None:
         raise HTTPException(status_code=404, detail="No kit at that link.")
     return kit
@@ -205,9 +215,51 @@ async def review_group(
     response_model_by_alias=True,
 )
 async def edit_claim(slug: str, claim_id: str, body: EditClaim, db: Db) -> Kit:
-    # Phase 6 re-runs the critique pass on this line alone and updates its flag
-    # state before returning.
-    kit = await repo.edit_claim(db, slug, claim_id, body.body.strip())
+    """Re-check one edited line on its own.
+
+    The critique runs over a list of one. It is the same call, the same cold
+    context and the same rules as the whole kit got, because an edited line
+    that only had to pass a laxer check would be the easiest way to get an
+    off-narrative claim into an approved kit.
+    """
+    narrative = await repo.get_narrative(db)
+    if narrative is None:
+        raise HTTPException(status_code=503, detail="The narrative is not seeded yet.")
+
+    context = await repo.get_claim_context(db, slug, claim_id, body.body.strip())
+    if context is None:
+        raise HTTPException(status_code=404, detail="No kit or claim at that link.")
+
+    run_id = str(uuid.uuid4())
+    records: list[CallRecord] = []
+
+    try:
+        judgements, record = await critique.critique_claims(
+            claims=[context.claim],
+            proof_points=context.proof_points,
+            narrative=narrative,
+        )
+    except ClaudeUnavailable:
+        # Saving the new wording with the old line's flag would attach a
+        # verdict to a sentence that never earned it. Better to keep what the
+        # person typed in the box and say the check could not run.
+        raise HTTPException(
+            status_code=503,
+            detail="That line could not be re-checked just now. Your wording is still here.",
+        ) from None
+
+    critique.apply([context.claim], judgements)
+    if record:
+        records.append(record)
+
+    kit = await repo.save_claim_edit(
+        db,
+        slug,
+        kit_id=context.kit_id,
+        claim=context.claim,
+        records=records,
+        run_id=run_id,
+    )
     if kit is None:
         raise HTTPException(status_code=404, detail="No kit or claim at that link.")
     return kit

@@ -165,6 +165,11 @@ def _collect(result: dict, *, claim_ids: set[str]) -> dict[str, Judgement]:
     judgements: dict[str, Judgement] = {}
 
     for raw in result.get("judgements") or []:
+        # The schema is a forced tool call, not a guarantee. A malformed entry
+        # means one line went unjudged, which `critique_claims` already treats
+        # as silence; it is not a reason to fail the whole kit.
+        if not isinstance(raw, dict):
+            continue
         claim_id = (raw.get("claim_id") or "").strip()
         reason = (raw.get("reason") or "").strip()
         if claim_id not in claim_ids:

@@ -2,6 +2,7 @@
 	import Header from '$lib/components/Header.svelte';
 	import KitPanel from '$lib/components/KitPanel.svelte';
 	import NarrativeSheet from '$lib/components/NarrativeSheet.svelte';
+	import { deserialize } from '$app/forms';
 	import { KitState, type Persist } from '$lib/state/kit.svelte';
 	import type { AssetType, Kit, ReviewState } from '$lib/types';
 	import type { PageData } from './$types';
@@ -13,12 +14,18 @@
 		for (const [k, v] of Object.entries(fields)) body.set(k, v);
 
 		const response = await fetch(`?/${action}`, { method: 'POST', body });
-		const result = await response.json();
-		// SvelteKit wraps action results; a failure has no kit to apply.
-		const parsed = JSON.parse(result.data ?? 'null');
-		const returned = Array.isArray(parsed) ? parsed[0]?.kit : parsed?.kit;
-		if (result.type !== 'success' || !returned) throw new Error('save failed');
-		return returned as Kit;
+
+		// An action's payload is devalue-encoded, not JSON: it is a flat array
+		// where objects hold indices into it. JSON.parse would hand back those
+		// indices as if they were the values. deserialize rebuilds the graph.
+		const result = deserialize<{ kit: Kit }, { message: string }>(await response.text());
+
+		// The server already wrote the failure in plain language, naming the kit's
+		// sensitive market or the empty line. Throwing our own wording here would
+		// replace an explanation with a shrug.
+		if (result.type === 'failure') throw new Error(result.data?.message ?? '');
+		if (result.type !== 'success' || !result.data?.kit) throw new Error('');
+		return result.data.kit;
 	}
 
 	const persist: Persist = {

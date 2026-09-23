@@ -228,6 +228,10 @@ def _collect(
     counts = dict.fromkeys(ASSET_TYPES, 0)
 
     for raw in result.get("claims") or []:
+        # The schema is a forced tool call, not a guarantee. A malformed entry
+        # is one line lost, which this function is already built to survive.
+        if not isinstance(raw, dict):
+            continue
         asset_type = raw.get("asset_type")
         body = (raw.get("body") or "").strip()
         kind = raw.get("evidence_kind")

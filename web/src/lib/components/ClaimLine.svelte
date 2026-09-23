@@ -10,6 +10,7 @@
 		flagged: boolean;
 		showMarker: boolean;
 		justChecked: boolean;
+		recheckLabel: string;
 		canEdit: boolean;
 		editRevealed: boolean;
 		evidenceOpen: boolean;
@@ -90,7 +91,9 @@
 			</button>
 
 			{#if line.justChecked}
-				<span class="rechecked">Re-checked, on message</span>
+				<!-- A live re-check can come back flagged, so this reports what the
+				 check found rather than announcing a pass. The reason sits below. -->
+				<span class="rechecked" class:caught={line.flagged}>{line.recheckLabel}</span>
 			{/if}
 
 			{#if line.evidenceOpen}
@@ -249,6 +252,12 @@
 		letter-spacing: 0.12em;
 		text-transform: uppercase;
 		color: var(--ok-ink);
+	}
+
+	/* A re-check that found something borrows the flag's colour, so the label
+	   agrees with the reason printed underneath it. */
+	.rechecked.caught {
+		color: var(--ink-3);
 	}
 
 	.popover {

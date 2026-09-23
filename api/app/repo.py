@@ -1,6 +1,7 @@
 """Reads and writes, and the mapping between rows and API payloads."""
 
 import uuid
+from dataclasses import dataclass
 from datetime import UTC, datetime
 
 from sqlalchemy import select, update
@@ -208,12 +209,29 @@ async def get_kit(db: AsyncSession, slug: str) -> Kit | None:
     return to_kit(row) if row else None
 
 
+class SensitiveMarket(Exception):
+    """This kit cannot be approved here, whatever the caller asked for."""
+
+
 async def set_group_review(
     db: AsyncSession, slug: str, asset_type: str, review_state: str
 ) -> Kit | None:
-    kit_id = await db.scalar(select(tables.Kit.id).where(tables.Kit.slug == slug))
-    if kit_id is None:
+    kit = (
+        await db.execute(
+            select(tables.Kit.id, tables.Kit.sensitive_market).where(
+                tables.Kit.slug == slug
+            )
+        )
+    ).first()
+    if kit is None:
         return None
+    kit_id, sensitive_market = kit
+
+    # The button is hidden in the browser, but hiding a button is not a rule.
+    # A sensitive-market kit goes to a named reviewer, so the only place that
+    # can be enforced is here.
+    if sensitive_market and review_state == "approved":
+        raise SensitiveMarket
 
     await db.execute(
         update(tables.Claim)
@@ -224,19 +242,78 @@ async def set_group_review(
     return await get_kit(db, slug)
 
 
-async def edit_claim(
+@dataclass
+class ClaimContext:
+    """What re-checking one edited line needs, without its kit around it."""
+
+    kit_id: str
+    sensitive_market: bool
+    claim: drafting.DraftClaim
+    proof_points: list[tuple[str, str]]
+
+
+async def get_claim_context(
     db: AsyncSession, slug: str, claim_id: str, body: str
-) -> Kit | None:
-    kit_id = await db.scalar(select(tables.Kit.id).where(tables.Kit.slug == slug))
-    if kit_id is None:
+) -> ClaimContext | None:
+    """The edited line, ready to be judged, and the sources it may cite.
+
+    The claim carries the new wording rather than the stored one, because what
+    needs checking is what the person just wrote.
+    """
+    kit_row = await db.scalar(select(tables.Kit).where(tables.Kit.slug == slug))
+    if kit_row is None:
         return None
 
+    row = next((c for c in kit_row.claims if c.id == claim_id), None)
+    if row is None:
+        return None
+
+    return ClaimContext(
+        kit_id=kit_row.id,
+        sensitive_market=kit_row.sensitive_market,
+        claim=drafting.DraftClaim(
+            id=row.id,
+            asset_type=row.asset_type,
+            body=body,
+            pillar_id=row.pillar_id,
+            evidence_kind=row.evidence_kind,
+            evidence_proof_point_id=row.evidence_proof_point_id,
+        ),
+        proof_points=[(p.id, p.text) for p in kit_row.proof_points],
+    )
+
+
+async def save_claim_edit(
+    db: AsyncSession,
+    slug: str,
+    *,
+    kit_id: str,
+    claim: drafting.DraftClaim,
+    records: list[CallRecord],
+    run_id: str,
+) -> Kit | None:
+    """Store the new wording and whatever the re-check made of it.
+
+    An edited line goes back to pending review. A group approved before the
+    edit was approved for wording that no longer exists, and carrying that
+    approval forward would put a tick next to a line nobody agreed to.
+    """
     result = await db.execute(
         update(tables.Claim)
-        .where(tables.Claim.kit_id == kit_id, tables.Claim.id == claim_id)
-        .values(body=body, edited_at=datetime.now(UTC))
+        .where(tables.Claim.kit_id == kit_id, tables.Claim.id == claim.id)
+        .values(
+            body=claim.body,
+            flag_state=claim.flag_state,
+            flag_reason=claim.flag_reason,
+            review_state="pending",
+            edited_at=datetime.now(UTC),
+        )
     )
     if result.rowcount == 0:
         return None
+
+    for row in _call_rows(records, run_id=run_id, kit_id=kit_id):
+        db.add(row)
+
     await db.commit()
     return await get_kit(db, slug)
