@@ -22,3 +22,7 @@ Thumbs.db
 vite.config.js.timestamp-*
 vite.config.ts.timestamp-*
 .neon
+
+# Vendored agent skill docs. Local tooling, not part of the product.
+.agents
+skills-lock.json
