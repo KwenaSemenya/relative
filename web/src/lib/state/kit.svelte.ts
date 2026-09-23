@@ -251,10 +251,21 @@ export class KitState {
 		return `${Math.round((this.step / GENERATION_STEPS.length) * 100)}%`;
 	}
 
+	/** The line under the progress bar.
+	 *
+	 * A real generate is three Claude calls and takes about half a minute, so
+	 * it says so. Quoting the demo's four seconds to someone who is waiting
+	 * thirty makes the product look broken rather than fast.
+	 */
 	get generationCount() {
-		return this.step >= GENERATION_STEPS.length
-			? 'Eight lines drafted, eight checked.'
-			: 'Usually takes about four seconds.';
+		if (this.step < GENERATION_STEPS.length) {
+			return this.live
+				? 'Usually takes about half a minute.'
+				: 'Usually takes about four seconds.';
+		}
+		return this.live
+			? 'Every line is being checked against the narrative.'
+			: 'Eight lines drafted, eight checked.';
 	}
 
 	get steps() {
@@ -491,12 +502,20 @@ export class KitState {
 		}
 	}
 
-	runProgress() {
+	/** Milliseconds at which each step starts running.
+	 *
+	 * The demo runs the design's scripted pace. A real generate is three Claude
+	 * calls and takes around half a minute, so it gets its own pacing measured
+	 * from actual runs: validation, then the long drafting call, then the
+	 * critique. Reusing the scripted timings would park a full progress bar in
+	 * front of someone for another twenty seconds, which reads as a hang.
+	 */
+	static DEMO_PACE = [300, 1100, 2100, 3100];
+	static LIVE_PACE = [300, 3000, 6500, 24000];
+
+	runProgress(pace: number[] = KitState.DEMO_PACE) {
 		this.step = 0;
-		this.#later(() => (this.step = 1), 300);
-		this.#later(() => (this.step = 2), 1100);
-		this.#later(() => (this.step = 3), 2100);
-		this.#later(() => (this.step = 4), 3100);
+		pace.forEach((at, i) => this.#later(() => (this.step = i + 1), at));
 	}
 
 	async generate() {
@@ -510,7 +529,7 @@ export class KitState {
 		this.demo = 'generating';
 		this.editingId = null;
 		this.justCheckedId = null;
-		this.runProgress();
+		this.runProgress(this.#draft ? KitState.LIVE_PACE : KitState.DEMO_PACE);
 
 		if (!this.#draft) {
 			// No server to call: the demo switcher runs the scripted timings.

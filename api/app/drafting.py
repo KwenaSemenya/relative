@@ -16,7 +16,7 @@ than shown, because an unverifiable citation is worse than a missing line.
 
 from dataclasses import dataclass, field
 
-from app.claude import ask
+from app.claude import CallRecord, ask
 from app.models import Narrative
 
 ASSET_TYPES = ("talking_point", "social", "faq")
@@ -116,7 +116,9 @@ DRAFT_SCHEMA = {
                         "description": (
                             "What the brief asked for, and what the proof "
                             "points measured instead. Address the reader as "
-                            "'you'. At most 35 words."
+                            "'you'. Name a proof point by what it is — 'the "
+                            "Ridgeway pilot' — never by its id. At most 35 "
+                            "words."
                         ),
                     },
                 },
@@ -272,9 +274,10 @@ async def draft_claims(
     audience: str,
     proof_points: list[tuple[str, str]],
     narrative: Narrative,
-) -> tuple[Draft, dict[str, int]]:
+) -> tuple[Draft, CallRecord]:
     """Write the kit. `proof_points` is [(id, text)] with the kit's real ids."""
-    result, usage = await ask(
+    result, record = await ask(
+        phase="drafting",
         system=SYSTEM,
         prompt=_prompt(
             brief=brief,
@@ -292,4 +295,4 @@ async def draft_claims(
         proof_ids={pid for pid, _ in proof_points},
         pillar_ids={p.id for p in narrative.pillars},
     )
-    return draft, usage
+    return draft, record

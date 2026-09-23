@@ -8,6 +8,7 @@ instead of being written anyway.
 """
 
 import asyncio
+import re
 import sys
 from pathlib import Path
 
@@ -65,7 +66,7 @@ WORD_CEILING = {"talking_point": 30, "social": 20, "faq": 35}
 async def run_case(name: str, brief: str, audience: str, proofs: list[str]) -> int:
     ids = [(f"pp{i + 1}", t) for i, t in enumerate(proofs)]
     valid_proof = {pid for pid, _ in ids}
-    draft, usage = await draft_claims(
+    draft, record = await draft_claims(
         brief=brief, audience=audience, proof_points=ids, narrative=NARRATIVE
     )
 
@@ -94,7 +95,7 @@ async def run_case(name: str, brief: str, audience: str, proofs: list[str]) -> i
         f"    proof points: {len(proofs)}  ->  "
         f"claims {dict(sorted(by_type.items()))}  "
         f"requests {len(draft.evidence_requests)}  "
-        f"tokens {usage['input_tokens']}/{usage['output_tokens']}"
+        f"tokens {record.input_tokens}/{record.output_tokens}"
     )
     print(f"    longest line by type: {dict(sorted(longest.items()))}")
 
@@ -103,6 +104,11 @@ async def run_case(name: str, brief: str, audience: str, proofs: list[str]) -> i
         print(f"    [{c.id}] ({src}) {c.body}")
     for rid, need, why in draft.evidence_requests:
         print(f"    [{rid}] NEED {need}\n          WHY  {why}")
+        # This copy is shown to someone who has never seen a prompt, so an
+        # internal id in it is a defect rather than a detail.
+        leaked = re.findall(r"\b(?:pp\d+|pillar\d+)\b", f"{need} {why}")
+        if leaked:
+            problems.append(f"{rid} leaks ids: {', '.join(sorted(set(leaked)))}")
 
     for p in problems:
         print(f"    !! {p}")

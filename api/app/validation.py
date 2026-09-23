@@ -9,7 +9,7 @@ judge a brief and write from it lets it talk itself into writing something it
 should have rejected.
 """
 
-from app.claude import ask
+from app.claude import CallRecord, ask
 from app.models import Narrative
 
 VERDICT_SCHEMA = {
@@ -122,9 +122,10 @@ async def validate_inputs(
     audience: str,
     proof_texts: list[str],
     narrative: Narrative,
-) -> tuple[bool, str, str, dict[str, int]]:
-    """Return (ok, reason, fix, usage). A refusal is a successful call."""
-    result, usage = await ask(
+) -> tuple[bool, str, str, CallRecord]:
+    """Return (ok, reason, fix, record). A refusal is a successful call."""
+    result, record = await ask(
+        phase="validation",
         system=SYSTEM,
         prompt=_prompt(
             brief=brief,
@@ -146,4 +147,4 @@ async def validate_inputs(
     if not ok and not reason:
         ok = True
 
-    return ok, reason, fix, usage
+    return ok, reason, fix, record

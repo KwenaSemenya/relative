@@ -2,11 +2,16 @@
 
 Every call in the product goes through `ask`. It takes a JSON schema and
 returns parsed JSON, because each caller needs a specific shape rather than
-prose: a verdict here, a set of grounded claims in Phase 4, a per-claim
-judgement in Phase 5. The schema is enforced by a forced tool call, which is
-more reliable than asking for JSON in the prompt and parsing what comes back.
+prose: a verdict, a set of grounded claims, a per-claim judgement. The schema
+is enforced by a forced tool call, which is more reliable than asking for JSON
+in the prompt and parsing what comes back.
+
+`ask` hands back a CallRecord as well as the answer, so a call cannot be made
+without producing the thing that makes it auditable. A product whose whole
+claim is that every line can be traced has to be able to show its own working.
 """
 
+from dataclasses import dataclass
 from functools import lru_cache
 from typing import Any
 
@@ -23,6 +28,24 @@ class ClaudeUnavailable(Exception):
     """
 
 
+@dataclass
+class CallRecord:
+    """One Claude call, kept whole so it can be read back later.
+
+    The system prompt is stored alongside the answer rather than referenced,
+    because the prompts change between deploys and a log that says only which
+    phase ran cannot tell you what the model was actually asked at the time.
+    """
+
+    phase: str
+    model: str
+    system: str
+    prompt: str
+    response: dict[str, Any]
+    input_tokens: int
+    output_tokens: int
+
+
 @lru_cache
 def client() -> AsyncAnthropic:
     settings = get_settings()
@@ -33,16 +56,17 @@ def client() -> AsyncAnthropic:
 
 async def ask(
     *,
+    phase: str,
     system: str,
     prompt: str,
     schema: dict[str, Any],
     tool_name: str,
     max_tokens: int = 2048,
-) -> tuple[dict[str, Any], dict[str, int]]:
-    """Return the model's structured answer and its token usage.
+) -> tuple[dict[str, Any], CallRecord]:
+    """Return the model's structured answer and a record of the call.
 
-    Usage comes back so Phase 7 can bill against the daily cap without
-    re-deriving it, and so calls can be logged with their real cost.
+    The record carries token usage so Phase 7 can bill against the daily cap
+    without re-deriving it.
     """
     settings = get_settings()
 
@@ -68,10 +92,15 @@ async def ask(
 
     for block in message.content:
         if block.type == "tool_use" and block.name == tool_name:
-            usage = {
-                "input_tokens": message.usage.input_tokens,
-                "output_tokens": message.usage.output_tokens,
-            }
-            return dict(block.input), usage
+            result = dict(block.input)
+            return result, CallRecord(
+                phase=phase,
+                model=settings.claude_model,
+                system=system,
+                prompt=prompt,
+                response=result,
+                input_tokens=message.usage.input_tokens,
+                output_tokens=message.usage.output_tokens,
+            )
 
     raise ClaudeUnavailable("Claude did not return the expected result.")

@@ -1,11 +1,13 @@
 """Reads and writes, and the mapping between rows and API payloads."""
 
+import uuid
 from datetime import UTC, datetime
 
 from sqlalchemy import select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app import drafting, tables
+from app.claude import CallRecord
 from app.models import AssetGroup, Claim, EvidenceRequest, Kit, Narrative, Pillar
 from app.models import ProofPoint as ProofPointModel
 from app.slugs import make_slug
@@ -104,6 +106,40 @@ def proof_point_ids(proof_texts: list[str]) -> list[tuple[str, str]]:
     return [(f"pp{i + 1}", text) for i, text in enumerate(proof_texts)]
 
 
+def _call_rows(
+    records: list[CallRecord], *, run_id: str, kit_id: str | None
+) -> list[tables.ClaudeCall]:
+    return [
+        tables.ClaudeCall(
+            id=str(uuid.uuid4()),
+            run_id=run_id,
+            kit_id=kit_id,
+            ordinal=i,
+            phase=r.phase,
+            model=r.model,
+            system=r.system,
+            prompt=r.prompt,
+            response=r.response,
+            input_tokens=r.input_tokens,
+            output_tokens=r.output_tokens,
+        )
+        for i, r in enumerate(records)
+    ]
+
+
+async def log_calls(
+    db: AsyncSession, records: list[CallRecord], *, run_id: str
+) -> None:
+    """Record calls belonging to a request that produced no kit.
+
+    A refused brief is the case most worth being able to read back, and it
+    never reaches create_kit, so it needs its own way in.
+    """
+    for row in _call_rows(records, run_id=run_id, kit_id=None):
+        db.add(row)
+    await db.commit()
+
+
 async def create_kit(
     db: AsyncSession,
     brief: str,
@@ -111,6 +147,8 @@ async def create_kit(
     proof_texts: list[str],
     sensitive_market: bool,
     draft: drafting.Draft,
+    records: list[CallRecord],
+    run_id: str,
 ) -> Kit:
     slug = make_slug(brief)
     kit = tables.Kit(
@@ -155,6 +193,9 @@ async def create_kit(
                 kit_id=kit.id, id=rid, ordinal=i, need=need, why=why
             )
         )
+
+    for row in _call_rows(records, run_id=run_id, kit_id=kit.id):
+        db.add(row)
 
     await db.commit()
     created = await get_kit(db, slug)

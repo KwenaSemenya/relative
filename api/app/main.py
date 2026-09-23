@@ -5,14 +5,15 @@ no CORS layer and no public surface. Every response is camelCase to match the
 types in web/src/lib/types.ts.
 """
 
+import uuid
 from typing import Annotated
 
 from fastapi import Depends, FastAPI, HTTPException
 from pydantic import Field
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app import repo
-from app.claude import ClaudeUnavailable
+from app import critique, repo
+from app.claude import CallRecord, ClaudeUnavailable
 from app.config import get_settings
 from app.db import session
 from app.drafting import draft_claims
@@ -84,6 +85,12 @@ async def get_narrative(db: Db) -> Narrative:
 async def create_kit(body: CreateKit, db: Db) -> CreateKitResult:
     proof_texts = [p.strip() for p in body.proof_points if p.strip()]
     brief = body.brief.strip()
+    proof_points = repo.proof_point_ids(proof_texts)
+
+    # Every call this request makes is collected under one id, so the three of
+    # them can be read back together afterwards.
+    run_id = str(uuid.uuid4())
+    records: list[CallRecord] = []
 
     narrative = await repo.get_narrative(db)
     if narrative is None:
@@ -92,7 +99,7 @@ async def create_kit(body: CreateKit, db: Db) -> CreateKitResult:
     # Pre-flight. Nothing is written, and no row is created, until the brief
     # has been read on its own.
     try:
-        ok, reason, fix, _usage = await validate_inputs(
+        ok, reason, fix, record = await validate_inputs(
             brief=brief,
             audience=body.audience,
             proof_texts=proof_texts,
@@ -103,28 +110,33 @@ async def create_kit(body: CreateKit, db: Db) -> CreateKitResult:
             status_code=503,
             detail="The brief could not be checked just now. Nothing was lost.",
         ) from None
+    records.append(record)
 
     if not ok:
+        await repo.log_calls(db, records, run_id=run_id)
         return CreateKitResult(refusal=Refusal(reason=reason, fix=fix))
 
     # Generation happens before the row exists, so a failed call leaves no
     # half-written kit behind for someone to find later.
     try:
-        draft, _usage = await draft_claims(
+        draft, record = await draft_claims(
             brief=brief,
             audience=body.audience,
-            proof_points=repo.proof_point_ids(proof_texts),
+            proof_points=proof_points,
             narrative=narrative,
         )
     except ClaudeUnavailable:
+        await repo.log_calls(db, records, run_id=run_id)
         raise HTTPException(
             status_code=503,
             detail="The kit could not be written just now. Nothing was lost.",
         ) from None
+    records.append(record)
 
     # Every line was dropped for citing something this kit does not have. A kit
     # of nothing is not a kit, and saying so beats an empty page.
     if not draft.claims:
+        await repo.log_calls(db, records, run_id=run_id)
         raise HTTPException(
             status_code=502,
             detail=(
@@ -133,6 +145,22 @@ async def create_kit(body: CreateKit, db: Db) -> CreateKitResult:
             ),
         )
 
+    # The critique reads the lines without the brief, so it cannot be argued
+    # into approving a line by what was asked for. A critique that fails to run
+    # is not a reason to lose the kit: the lines are still saved, unflagged,
+    # and a kit nobody second-guessed is better than no kit at all.
+    try:
+        judgements, record = await critique.critique_claims(
+            claims=draft.claims,
+            proof_points=proof_points,
+            narrative=narrative,
+        )
+        critique.apply(draft.claims, judgements)
+        if record:
+            records.append(record)
+    except ClaudeUnavailable:
+        pass
+
     kit = await repo.create_kit(
         db,
         brief=brief,
@@ -140,6 +168,8 @@ async def create_kit(body: CreateKit, db: Db) -> CreateKitResult:
         proof_texts=proof_texts,
         sensitive_market=body.sensitive_market,
         draft=draft,
+        records=records,
+        run_id=run_id,
     )
     return CreateKitResult(kit=kit)
 
