@@ -69,10 +69,11 @@ export interface DraftInput {
 	sensitiveMarket: boolean;
 }
 
-/** A refusal and a kit are mutually exclusive; one of the two is always set. */
+/** Exactly one of the three is set. A limit means the brief was never read. */
 export interface DraftResult {
 	kit: Kit | null;
 	refusal: { reason: string; fix: string } | null;
+	limit: { reason: string; fix: string } | null;
 }
 
 /** Runs pre-flight validation and, if it passes, creates the kit. */
@@ -122,6 +123,12 @@ export class KitState {
 	 */
 	refusalReason = $state(REFUSAL_REASON);
 	refusalFix = $state(REFUSAL_FIX);
+	/**
+	 * Set when the demo has nothing left to spend. Its wording comes from the
+	 * server, which is the only thing that knows which limit was hit and when
+	 * it lifts, so the page never guesses at a number or a time.
+	 */
+	limit = $state<{ reason: string; fix: string } | null>(null);
 	/** True once this session generated its own kit, so the page stops
 	 * describing what is on screen as last week's worked example. */
 	generated = $state(false);
@@ -193,8 +200,9 @@ export class KitState {
 		return this.isDark ? 'Switch to light mode' : 'Switch to dark mode';
 	}
 
+	/** True when there is nothing left to generate with, demo or real. */
 	get budgetSpent() {
-		return this.demo === 'budget';
+		return this.demo === 'budget' || !!this.limit;
 	}
 
 	get generating() {
@@ -231,6 +239,7 @@ export class KitState {
 
 	/** Every disabled action says why it is disabled. */
 	get generateBlockedWhy() {
+		if (this.limit) return this.limit.reason;
 		if (this.budgetSpent) return 'Demo generations are used up for today.';
 		if (this.generating) return '';
 		return 'Add at least two proof points first.';
@@ -336,8 +345,12 @@ export class KitState {
 		if (this.budgetSpent) {
 			return {
 				kicker: 'Demo limit',
-				title: 'You have used all five demo generations for today.',
-				body: 'The kit below is the worked example, not yours. Your brief and proof points are saved — generate again tomorrow.',
+				// The server says which limit was hit and when it lifts. Only the
+				// scripted demo state, which has no server behind it, falls back.
+				title: this.limit?.reason ?? 'You have used all five demo generations for today.',
+				body:
+					this.limit?.fix ??
+					'The kit below is the worked example, not yours. Your brief and proof points are saved — generate again tomorrow.',
 				hasLink: false,
 				link: ''
 			};
@@ -566,6 +579,16 @@ export class KitState {
 			});
 
 			this.#clearTimers();
+
+			if (result.limit) {
+				// Nothing was read and nothing was spent. The worked example stays
+				// on screen so the page is still worth looking at, and the notice
+				// above it says why it is not theirs.
+				this.limit = result.limit;
+				this.view = 'kit';
+				this.demo = 'landing';
+				return;
+			}
 
 			if (result.refusal) {
 				// Nothing was written and nothing is cleared. Every input stays

@@ -17,7 +17,7 @@ export const load: PageServerLoad = async () => {
 };
 
 export const actions: Actions = {
-	generate: async ({ request }) => {
+	generate: async ({ request, getClientAddress }) => {
 		const form = await request.formData();
 		const brief = String(form.get('brief') ?? '').trim();
 		const audience = String(form.get('audience') ?? 'Educators');
@@ -32,12 +32,22 @@ export const actions: Actions = {
 		}
 
 		try {
-			const result = await createKit({ brief, audience, proofPoints, sensitiveMarket });
+			const result = await createKit(
+				{ brief, audience, proofPoints, sensitiveMarket },
+				getClientAddress()
+			);
 
 			// A refusal is a real answer, not a failure: the brief was read and
 			// the honest outcome was to write nothing. The page keeps every input.
 			if (result.refusal) {
 				return { refusal: result.refusal };
+			}
+
+			// A limit is not a failure either. The demo had nothing left to spend,
+			// which is a fact about the demo rather than about the brief, so it is
+			// said plainly and the worked example stays on screen.
+			if (result.limit) {
+				return { limit: result.limit };
 			}
 
 			return { kit: result.kit };

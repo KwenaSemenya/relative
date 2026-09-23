@@ -8,11 +8,11 @@ types in web/src/lib/types.ts.
 import uuid
 from typing import Annotated
 
-from fastapi import Depends, FastAPI, HTTPException
+from fastapi import Depends, FastAPI, Header, HTTPException
 from pydantic import Field
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app import critique, repo
+from app import budget, critique, repo
 from app.claude import CallRecord, ClaudeUnavailable
 from app.config import get_settings
 from app.db import session
@@ -30,6 +30,12 @@ app = FastAPI(
 
 Db = Annotated[AsyncSession, Depends(session)]
 
+# The API sits on Fly's private network, so every request arrives from the
+# SvelteKit server and the socket address is always the same one. The visitor's
+# address is whatever SvelteKit resolved and forwarded, and it is hashed on
+# arrival rather than stored.
+Visitor = Annotated[str | None, Header(alias="x-visitor-address")]
+
 
 class CreateKit(Wire):
     brief: Annotated[str, Field(min_length=1, max_length=4000)]
@@ -46,14 +52,17 @@ class Refusal(Wire):
 
 
 class CreateKitResult(Wire):
-    """Either a kit or a refusal, never both.
+    """A kit, a refusal, or a limit. Exactly one of the three.
 
     A refusal is a normal answer rather than an error: the brief was read, and
-    the honest response was to write nothing. The caller keeps every input.
+    the honest response was to write nothing. A limit is not even that — the
+    brief was never read, because the demo had nothing left to spend on it.
+    Both keep every input the caller typed.
     """
 
     kit: Kit | None = None
     refusal: Refusal | None = None
+    limit: Refusal | None = None
 
 
 class GroupReview(Wire):
@@ -82,7 +91,9 @@ async def get_narrative(db: Db) -> Narrative:
     response_model=CreateKitResult,
     response_model_by_alias=True,
 )
-async def create_kit(body: CreateKit, db: Db) -> CreateKitResult:
+async def create_kit(
+    body: CreateKit, db: Db, x_visitor_address: Visitor = None
+) -> CreateKitResult:
     proof_texts = [p.strip() for p in body.proof_points if p.strip()]
     brief = body.brief.strip()
     proof_points = repo.proof_point_ids(proof_texts)
@@ -90,7 +101,17 @@ async def create_kit(body: CreateKit, db: Db) -> CreateKitResult:
     # Every call this request makes is collected under one id, so the three of
     # them can be read back together afterwards.
     run_id = str(uuid.uuid4())
+    client = budget.client_id(x_visitor_address)
     records: list[CallRecord] = []
+
+    # Asked before the brief is even read, because the cheapest call is the one
+    # not made. A limit is not a refusal: nothing was judged, so nothing is
+    # said about the brief.
+    allowance = await budget.check(db, client)
+    if not allowance.ok:
+        return CreateKitResult(
+            limit=Refusal(reason=allowance.reason, fix=allowance.fix)
+        )
 
     narrative = await repo.get_narrative(db)
     if narrative is None:
@@ -113,7 +134,7 @@ async def create_kit(body: CreateKit, db: Db) -> CreateKitResult:
     records.append(record)
 
     if not ok:
-        await repo.log_calls(db, records, run_id=run_id)
+        await repo.log_calls(db, records, run_id=run_id, client=client)
         return CreateKitResult(refusal=Refusal(reason=reason, fix=fix))
 
     # Generation happens before the row exists, so a failed call leaves no
@@ -126,7 +147,7 @@ async def create_kit(body: CreateKit, db: Db) -> CreateKitResult:
             narrative=narrative,
         )
     except ClaudeUnavailable:
-        await repo.log_calls(db, records, run_id=run_id)
+        await repo.log_calls(db, records, run_id=run_id, client=client)
         raise HTTPException(
             status_code=503,
             detail="The kit could not be written just now. Nothing was lost.",
@@ -136,7 +157,7 @@ async def create_kit(body: CreateKit, db: Db) -> CreateKitResult:
     # Every line was dropped for citing something this kit does not have. A kit
     # of nothing is not a kit, and saying so beats an empty page.
     if not draft.claims:
-        await repo.log_calls(db, records, run_id=run_id)
+        await repo.log_calls(db, records, run_id=run_id, client=client)
         raise HTTPException(
             status_code=502,
             detail=(
@@ -170,6 +191,7 @@ async def create_kit(body: CreateKit, db: Db) -> CreateKitResult:
         draft=draft,
         records=records,
         run_id=run_id,
+        client=client,
     )
     return CreateKitResult(kit=kit)
 
@@ -214,17 +236,34 @@ async def review_group(
     response_model=Kit,
     response_model_by_alias=True,
 )
-async def edit_claim(slug: str, claim_id: str, body: EditClaim, db: Db) -> Kit:
+async def edit_claim(
+    slug: str, claim_id: str, body: EditClaim, db: Db, x_visitor_address: Visitor = None
+) -> Kit:
     """Re-check one edited line on its own.
 
     The critique runs over a list of one. It is the same call, the same cold
     context and the same rules as the whole kit got, because an edited line
     that only had to pass a laxer check would be the easiest way to get an
     off-narrative claim into an approved kit.
+
+    An edit is charged against the day's money but not against anyone's five
+    generations. Someone fixing a line the critic caught is the product doing
+    its job, and charging them for it would push them towards leaving the flag
+    on the page instead.
     """
     narrative = await repo.get_narrative(db)
     if narrative is None:
         raise HTTPException(status_code=503, detail="The narrative is not seeded yet.")
+
+    client = budget.client_id(x_visitor_address)
+    if await budget.over_cap(db):
+        raise HTTPException(
+            status_code=429,
+            detail=(
+                "This demo's daily spending cap is used up, so that line could "
+                "not be re-checked. Your wording is still here."
+            ),
+        )
 
     context = await repo.get_claim_context(db, slug, claim_id, body.body.strip())
     if context is None:
@@ -259,6 +298,7 @@ async def edit_claim(slug: str, claim_id: str, body: EditClaim, db: Db) -> Kit:
         claim=context.claim,
         records=records,
         run_id=run_id,
+        client=client,
     )
     if kit is None:
         raise HTTPException(status_code=404, detail="No kit or claim at that link.")

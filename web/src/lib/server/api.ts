@@ -38,21 +38,36 @@ async function call<T>(path: string, init?: RequestInit): Promise<T> {
 	return response.json() as Promise<T>;
 }
 
-/** A refusal is a successful call that produced no kit, on purpose. */
+/**
+ * A refusal is a successful call that produced no kit, on purpose. A limit is
+ * a successful call where the brief was never read at all.
+ */
 export interface CreateKitResult {
 	kit: Kit | null;
 	refusal: { reason: string; fix: string } | null;
+	limit: { reason: string; fix: string } | null;
 }
 
-export const createKit = (input: {
-	brief: string;
-	audience: string;
-	proofPoints: string[];
-	sensitiveMarket: boolean;
-}) =>
+/**
+ * The visitor's address, forwarded so the API can count per-visitor without
+ * ever seeing the connection. Every request from here arrives at the API from
+ * the same private address, so without this every visitor is one visitor.
+ */
+const visitor = (address: string) => ({ 'x-visitor-address': address });
+
+export const createKit = (
+	input: {
+		brief: string;
+		audience: string;
+		proofPoints: string[];
+		sensitiveMarket: boolean;
+	},
+	address: string
+) =>
 	call<CreateKitResult>('/kits', {
 		method: 'POST',
 		body: JSON.stringify(input),
+		headers: visitor(address),
 		// Pre-flight validation is a Claude call, so this outlives the default.
 		signal: AbortSignal.timeout(45_000)
 	});
@@ -67,10 +82,11 @@ export const reviewGroup = (slug: string, assetType: string, reviewState: string
 		body: JSON.stringify({ reviewState })
 	});
 
-export const editClaim = (slug: string, claimId: string, body: string) =>
+export const editClaim = (slug: string, claimId: string, body: string, address: string) =>
 	call<Kit>(`/kits/${encodeURIComponent(slug)}/claims/${encodeURIComponent(claimId)}`, {
 		method: 'POST',
 		body: JSON.stringify({ body }),
+		headers: visitor(address),
 		// An edit is re-checked by a Claude call before it is stored, so this
 		// waits like a generate rather than like a database read.
 		signal: AbortSignal.timeout(45_000)

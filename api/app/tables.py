@@ -161,12 +161,19 @@ class ClaudeCall(Base):
     kit — a refused brief is the case that most needs a record, so the log
     cannot depend on a kit existing. `run_id` groups the calls of one request,
     which is what makes a refusal retrievable at all.
+
+    This table is also what the daily limits are counted from, so the record of
+    what was spent and the thing that stops it being overspent are the same
+    rows. See app/budget.py.
     """
 
     __tablename__ = "claude_call"
 
     id: Mapped[str] = mapped_column(String(36), primary_key=True)
     run_id: Mapped[str] = mapped_column(String(36), index=True)
+    # Who asked for this, as a hash. Never the address itself: a per-visitor
+    # allowance only needs to recognise a returning visitor.
+    client: Mapped[str | None] = mapped_column(String(32), nullable=True)
     kit_id: Mapped[str | None] = mapped_column(
         String(64), ForeignKey("kit.id", ondelete="CASCADE"), nullable=True, index=True
     )

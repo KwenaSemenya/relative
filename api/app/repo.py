@@ -108,13 +108,14 @@ def proof_point_ids(proof_texts: list[str]) -> list[tuple[str, str]]:
 
 
 def _call_rows(
-    records: list[CallRecord], *, run_id: str, kit_id: str | None
+    records: list[CallRecord], *, run_id: str, kit_id: str | None, client: str
 ) -> list[tables.ClaudeCall]:
     return [
         tables.ClaudeCall(
             id=str(uuid.uuid4()),
             run_id=run_id,
             kit_id=kit_id,
+            client=client,
             ordinal=i,
             phase=r.phase,
             model=r.model,
@@ -129,14 +130,15 @@ def _call_rows(
 
 
 async def log_calls(
-    db: AsyncSession, records: list[CallRecord], *, run_id: str
+    db: AsyncSession, records: list[CallRecord], *, run_id: str, client: str
 ) -> None:
     """Record calls belonging to a request that produced no kit.
 
     A refused brief is the case most worth being able to read back, and it
-    never reaches create_kit, so it needs its own way in.
+    never reaches create_kit, so it needs its own way in. It is also what a
+    refused brief is counted by, so skipping this would make refusals free.
     """
-    for row in _call_rows(records, run_id=run_id, kit_id=None):
+    for row in _call_rows(records, run_id=run_id, kit_id=None, client=client):
         db.add(row)
     await db.commit()
 
@@ -150,6 +152,7 @@ async def create_kit(
     draft: drafting.Draft,
     records: list[CallRecord],
     run_id: str,
+    client: str,
 ) -> Kit:
     slug = make_slug(brief)
     kit = tables.Kit(
@@ -195,7 +198,7 @@ async def create_kit(
             )
         )
 
-    for row in _call_rows(records, run_id=run_id, kit_id=kit.id):
+    for row in _call_rows(records, run_id=run_id, kit_id=kit.id, client=client):
         db.add(row)
 
     await db.commit()
@@ -291,6 +294,7 @@ async def save_claim_edit(
     claim: drafting.DraftClaim,
     records: list[CallRecord],
     run_id: str,
+    client: str,
 ) -> Kit | None:
     """Store the new wording and whatever the re-check made of it.
 
@@ -312,7 +316,7 @@ async def save_claim_edit(
     if result.rowcount == 0:
         return None
 
-    for row in _call_rows(records, run_id=run_id, kit_id=kit_id):
+    for row in _call_rows(records, run_id=run_id, kit_id=kit_id, client=client):
         db.add(row)
 
     await db.commit()

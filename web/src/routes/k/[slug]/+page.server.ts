@@ -32,7 +32,7 @@ export const actions: Actions = {
 		}
 	},
 
-	edit: async ({ params, request }) => {
+	edit: async ({ params, request, getClientAddress }) => {
 		const form = await request.formData();
 		const claimId = String(form.get('claimId') ?? '');
 		const body = String(form.get('body') ?? '').trim();
@@ -42,7 +42,7 @@ export const actions: Actions = {
 		}
 
 		try {
-			return { kit: await editClaim(params.slug, claimId, body) };
+			return { kit: await editClaim(params.slug, claimId, body, getClientAddress()) };
 		} catch (e) {
 			// The user's wording is handed back so an API failure never loses it.
 			return fail(502, {

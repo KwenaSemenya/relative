@@ -23,9 +23,10 @@
 		// An action's payload is devalue-encoded, not JSON: it is a flat array
 		// where objects hold indices into it. JSON.parse would hand back those
 		// indices as if they were the values. deserialize rebuilds the graph.
-		const result = deserialize<{ kit?: Kit; refusal?: DraftResult['refusal'] }, { message: string }>(
-			await response.text()
-		);
+		const result = deserialize<
+			{ kit?: Kit; refusal?: DraftResult['refusal']; limit?: DraftResult['limit'] },
+			{ message: string }
+		>(await response.text());
 
 		if (result.type === 'failure') {
 			throw new Error(result.data?.message ?? 'The brief could not be checked just now.');
@@ -34,7 +35,11 @@
 			throw new Error('The brief could not be checked just now.');
 		}
 
-		return { kit: result.data?.kit ?? null, refusal: result.data?.refusal ?? null };
+		return {
+			kit: result.data?.kit ?? null,
+			refusal: result.data?.refusal ?? null,
+			limit: result.data?.limit ?? null
+		};
 	}
 
 	const kit = new KitState({
