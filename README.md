@@ -2,6 +2,8 @@
 
 Turn one approved brand narrative into on-message assets, with every line traced back to a proof point.
 
+**Live: [relative-web.fly.dev](https://relative-web.fly.dev)** — in private testing, so it asks for a password. Ask me for one, or run it locally with the steps below.
+
 A regional marketing team has an HQ-approved narrative and a deadline. They need talking points, social copy and an FAQ that say the same thing HQ signed off on. Relative writes that kit from a brief, cites the evidence behind each line, flags the lines that drift, and hands the decision to a person.
 
 The demo runs against a fictional ed-tech company, Kestrel Learn. There is no sign-in: a kit lives at `/k/<slug>` and the link is the only access control.
